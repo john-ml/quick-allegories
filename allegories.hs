@@ -44,8 +44,8 @@ infixl 5 ∩
 (∩) :: Rel -> Rel -> Rel
 r ∩ s = S.toList (S.fromList r `S.intersection` S.fromList s)
 
-conv :: Rel -> Rel
-conv = map (\(x, y) -> (y, x))
+op :: Rel -> Rel
+op = map (\(x, y) -> (y, x))
 
 infix 2 <=>
 (<=>) :: Bool -> Bool -> Bool
@@ -66,6 +66,8 @@ checkAllegoryFacts = do
   quickCheck \ r s -> r ⊆ s <=> r ∩ s =~= r
   quickCheck \ r s t -> r · (s ∩ t) ⊆ (r · s) ∩ (r · t)
   quickCheck \ r s t -> (r ∩ s) · t ⊆ (r · t) ∩ (s · t)
+  -- Converse
+  quickCheck \ r -> op (op r) =~= r
 
 main = do
   checkCategoryFacts
