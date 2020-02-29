@@ -205,7 +205,21 @@ basics = hspec do
      ]
    check "range left comp" \ r s -> ran (r · s) ⊆ ran r
    lemma "range left comp eqn" \ r s -> ran (r · s) =~= ran (r · ran s)
-   -- TODO: proof
+   proof \ r s -> and
+     [ -- ==>
+       ascending
+       [ ran (r · s)
+       , ran (r · ran s · s) -- ran left id
+       , ran (r · ran s) -- ran left comp
+       ]
+     , -- <==
+       ascending
+       [ ran (r · ran s)
+       , ran (r · ((s · op s) ∩ idt)) -- defn of ran
+       , ran (r · s · op s) -- monotonicity of meet
+       , ran (r · s) -- ran comp left
+       ]
+     ]
    check' \ r s -> dom (r · s) =~= dom (dom r · s)
    check "range coreflexive" \ r -> coreflexive (ran r)
    lemma "range meet" \ r s -> ran (r ∩ s) =~= idt ∩ (r · op s)
