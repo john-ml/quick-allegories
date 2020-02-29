@@ -2,7 +2,11 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+import Debug.Trace
 import Test.Hspec
 import Test.QuickCheck
 import qualified Data.List as L
@@ -11,44 +15,66 @@ import qualified Data.Char as C
 import Data.Function (on)
 import Control.Monad
 
+type Rel a = [(a, a)]
+
 -- Printable characters
-newtype Int' = Int' {unInt' :: Int} deriving (Eq, Ord)
+newtype Tiny = Tiny {unTiny :: Int} deriving (Eq, Ord)
 
-instance Show Int' where show = show . unInt'
+instance Show Tiny where show = show . unTiny
 
-instance Enum Int' where
-  toEnum = Int'
-  fromEnum = unInt'
+instance Enum Tiny where
+  toEnum = Tiny
+  fromEnum = unTiny
 
-instance Bounded Int' where
-  minBound = Int' 0
-  maxBound = Int' 100
+instance Bounded Tiny where
+  minBound = Tiny 0
+  maxBound = Tiny 100
 
-instance Arbitrary Int' where
-  arbitrary = elements [minBound .. maxBound]
+class Universe a where universe :: [a]
+instance Universe Tiny where universe = [minBound .. maxBound]
 
-type Rel = [(Int', Int')]
+instance Arbitrary Tiny where
+  arbitrary = elements universe
+
+-- Need to be able to enumerate products
+instance (Universe a, Universe b) => Universe (a, b) where
+  universe = liftM2 (,) universe universe
+
+class (Universe a, Ord a) => Object a
+instance Object Tiny
+instance (Object a, Object b) => Object (a, b)
+
+class Testable a => Proposition' a where
+  prop :: a -> Property
+  prop = property
+
+instance Proposition' Bool
+instance (Object a, Arbitrary a, Show a, Proposition' p) => Proposition' (Rel a -> p)
+
+class Proposition' a => Proposition a
+instance Proposition Bool
+instance (a ~ Tiny, Proposition p) => Proposition (Rel a -> p)
 
 infix 4 =~=
-(=~=) :: Rel -> Rel -> Bool
+(=~=) :: Object a => Rel a -> Rel a -> Bool
 (=~=) = (==) `on` S.fromList
 
 infixl 7 ·
-(·) :: Rel -> Rel -> Rel
+(·) :: Object a => Rel a -> Rel a -> Rel a
 r · s = [(x, z) | (x, y) <- s, (y', z) <- r, y == y']
 
-idt :: Rel
-idt = [(x, x) | x <- [minBound .. maxBound]]
+idt :: Object a => Rel a
+idt = [(x, x) | x <- universe]
 
 infix 4 ⊆
-(⊆) :: Rel -> Rel -> Bool
+(⊆) :: Object a => Rel a -> Rel a -> Bool
 r ⊆ s = S.fromList r `S.isSubsetOf` S.fromList s
 
 infixl 5 ∩
-(∩) :: Rel -> Rel -> Rel
+(∩) :: Object a => Rel a -> Rel a -> Rel a
 r ∩ s = S.toList (S.fromList r `S.intersection` S.fromList s)
 
-op :: Rel -> Rel
+op :: Object a => Rel a -> Rel a
 op = map (\(x, y) -> (y, x))
 
 infix 2 <=>
@@ -64,82 +90,103 @@ adjAll f = \case
 equivalent :: Eq a => [a] -> Bool
 equivalent = adjAll (==)
 
-ascending :: [Rel] -> Bool
+ascending :: Object a => [Rel a] -> Bool
 ascending = adjAll (⊆)
 
 chain :: [Bool] -> Bool
 chain = adjAll (\ x y -> not x || y)
 
-dom :: Rel -> Rel
+dom :: Object a => Rel a -> Rel a
 dom r = [(x, x) | (x, _) <- r]
 
-ran :: Rel -> Rel
+ran :: Object a => Rel a -> Rel a
 ran r = [(x, x) | (_, x) <- r]
 
-coreflexive :: Rel -> Bool
+coreflexive :: Object a => Rel a -> Bool
 coreflexive r = r ⊆ idt
 
-coreflexiv :: Rel -> Rel
+coreflexiv :: Object a => Rel a -> Rel a
 coreflexiv = filter (uncurry (==))
 
-reflexive :: Rel -> Bool
+reflexive :: Object a => Rel a -> Bool
 reflexive r = idt ⊆ r
 
-reflexiv :: Rel -> Rel
+reflexiv :: Object a => Rel a -> Rel a
 reflexiv r = r ++ idt
 
-transitive :: Rel -> Bool
+transitive :: Object a => Rel a -> Bool
 transitive r = r · r ⊆ r
 
-idempotent :: Rel -> Bool
+idempotent :: Object a => Rel a -> Bool
 idempotent r = r · r =~= r
 
-symmetric :: Rel -> Bool
+symmetric :: Object a => Rel a -> Bool
 symmetric r = r ⊆ op r
 
-symmetri :: Rel -> Rel
+symmetri :: Object a => Rel a -> Rel a
 symmetri r = r ++ op r
 
-antisymmetric :: Rel -> Bool
+antisymmetric :: Object a => Rel a -> Bool
 antisymmetric r = r ∩ op r ⊆ idt
 
-simple :: Rel -> Bool
+simple :: Object a => Rel a -> Bool
 simple r = r · op r ⊆ idt
 
-simpl :: Rel -> Rel
+simpl :: Object a => Rel a -> Rel a
 simpl = L.nubBy ((==) `on` fst)
 
-entire :: Rel -> Bool
+entire :: Object a => Rel a -> Bool
 entire r = idt ⊆ op r · r
 
-entir :: Rel -> Rel
+entir :: Object a => Rel a -> Rel a
 entir = (++ idt)
 
-funcn :: Rel -> Bool
+funcn :: Object a => Rel a -> Bool
 funcn = liftM2 (&&) simple entire
 
-func :: Rel -> Rel
+func :: Object a => Rel a -> Rel a
 func = simpl . entir
+
+tabulation :: Object a => Rel a -> Rel a -> Rel a -> Bool
+tabulation f g r = r =~= f · op g && (op f · f) ∩ (op g · g) =~= idt
+
+tab :: Object a => Rel a -> (Rel a, Rel a)
+tab r = undefined
 
 --------------------------------------------------------------------------------
 
 latestOnly :: Bool
 latestOnly = True
 
-check :: (HasCallStack, Testable a) => String -> a -> SpecWith (Arg Property)
-check s p = it s (property p)
+check :: (HasCallStack, Proposition a) => String -> a -> SpecWith (Arg Property)
+check s p = it s (prop p)
 
-check' :: (HasCallStack, Testable a) => a -> SpecWith (Arg Property)
-check' = check ""
+acheck :: (HasCallStack, Proposition a) => a -> SpecWith (Arg Property)
+acheck = check ""
 
-lemma :: (HasCallStack, Testable a) => String -> a -> SpecWith (Arg Property)
-lemma s p = it s (property p)
+lemma :: (HasCallStack, Proposition a) => String -> a -> SpecWith (Arg Property)
+lemma s p = it s (prop p)
 
-lemma' :: (HasCallStack, Testable a) => a -> SpecWith (Arg Property)
-lemma' p = it "lemma" (property p)
+alemma :: (HasCallStack, Proposition a) => a -> SpecWith (Arg Property)
+alemma p = it "lemma" (prop p)
 
-proof :: (HasCallStack, Testable a) => a -> SpecWith (Arg Property)
-proof p = it "proof" (property p)
+proof :: (HasCallStack, Proposition a) => a -> SpecWith (Arg Property)
+proof p = it "proof" (prop p)
+
+check' :: (HasCallStack, Proposition' a) => String -> a -> SpecWith (Arg Property)
+check' s p = it s (prop p)
+
+acheck' :: (HasCallStack, Proposition' a) => a -> SpecWith (Arg Property)
+acheck' = check' ""
+
+lemma' :: (HasCallStack, Proposition' a) => String -> a -> SpecWith (Arg Property)
+lemma' s p = it s (prop p)
+
+alemma' :: (HasCallStack, Proposition' a) => a -> SpecWith (Arg Property)
+alemma' p = it "lemma" (prop p)
+
+proof' :: (HasCallStack, Proposition' a) => a -> SpecWith (Arg Property)
+proof' p = it "proof" (prop p)
 
 basics = hspec do
   describe "Category axioms" do
@@ -153,7 +200,7 @@ basics = hspec do
       check "associativity" \ r s t -> r ∩ (s ∩ t) =~= (r ∩ s) ∩ t
       check "idempotency" \ r -> r ∩ r =~= r
     describe "Meets and inclusions" do
-      check' \ r s -> r ⊆ s <=> r ∩ s =~= r
+      acheck \ r s -> r ⊆ s <=> r ∩ s =~= r
       check "comp left-distrib meet" \ r s t -> r · (s ∩ t) ⊆ (r · s) ∩ (r · t)
       check "comp right-distrib meet" \ r s t -> (r ∩ s) · t ⊆ (r · t) ∩ (s · t)
     describe "Converse" do
@@ -178,7 +225,7 @@ basics = hspec do
         , (op r ∩ op s) · (s ∩ r) -- simplification
         , op (r ∩ s) · (s ∩ r) -- op meet distrib
         ]
-      lemma' \ r -> r ⊆ r · op r · r
+      alemma \ r -> r ⊆ r · op r · r
       proof \ r -> ascending
         [ r
         , (r · idt) ∩ r
@@ -186,7 +233,7 @@ basics = hspec do
         , r · op r · r
         ]
   describe "Domain and range" do
-   check' \ r -> dom r =~= ran (op r)
+   acheck \ r -> dom r =~= ran (op r)
    check "range universal property" \ r x -> ran r ⊆ x <=> r ⊆ x · r
    check "range direct definition" \ r -> ran r =~= r · op r ∩ idt
    lemma "range left id" \ r -> r =~= ran r · r
@@ -220,7 +267,7 @@ basics = hspec do
        , ran (r · s) -- ran comp left
        ]
      ]
-   check' \ r s -> dom (r · s) =~= dom (dom r · s)
+   acheck \ r s -> dom (r · s) =~= dom (dom r · s)
    check "range coreflexive" \ r -> coreflexive (ran r)
    lemma "range meet" \ r s -> ran (r ∩ s) =~= idt ∩ (r · op s)
    proof \ r s -> and
@@ -426,6 +473,8 @@ basics = hspec do
     --    , ran (op f · op r) · op f ⊆ op f · dom r -- shunting
     --    ]
     --  ]
+  describe "Tabular allegories" do
+    pure ()
 
 main = do
   basics
