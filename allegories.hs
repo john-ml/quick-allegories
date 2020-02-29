@@ -85,7 +85,7 @@ check :: (HasCallStack, Testable a) => String -> a -> SpecWith (Arg Property)
 check s p = it s (property p)
 
 check' :: (HasCallStack, Testable a) => a -> SpecWith (Arg Property)
-check' p = it "" (property p)
+check' = check ""
 
 lemma :: (HasCallStack, Testable a) => String -> a -> SpecWith (Arg Property)
 lemma s p = it s (property p)
@@ -162,10 +162,13 @@ main = hspec do
      check' \ r s -> ran (r · s) =~= ran (r · ran s)
      check' \ r s -> dom (r · s) =~= dom (dom r · s)
      check "range coreflexive" \ r -> coreflexive (ran r)
-     lemma "range meet" \ r s -> ran (r ∩ s) =~= idt ∩ r · op s
-     proof \ r s -> ascending
-       [ ran (r ∩ s)
-       , ((r ∩ s) · op (r ∩ s)) ∩ idt -- direct range definition
-       , ((r · op r) ∩ (r · op s) ∩ (s · op r) ∩ (s · op s)) ∩ idt -- distribution
-       , (r · op s) ∩ idt -- monotonicity of meet
+     lemma "range meet" \ r s -> ran (r ∩ s) =~= idt ∩ (r · op s)
+     proof \ r s -> and
+       [ ascending
+         [ran (r ∩ s)
+         , ((r ∩ s) · op (r ∩ s)) ∩ idt -- direct range definition
+         , ((r · op r) ∩ (r · op s) ∩ (s · op r) ∩ (s · op s)) ∩ idt -- distribution
+         , (r · op s) ∩ idt -- monotonicity of meet
+         ]
+       , True
        ]
