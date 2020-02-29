@@ -61,7 +61,7 @@ adjAll f = \case
   [_] -> True
   x : xs@(y : _) -> f x y && adjAll f xs
 
-equivalent :: [Bool] -> Bool
+equivalent :: Eq a => [a] -> Bool
 equivalent = adjAll (==)
 
 ascending :: [Rel] -> Bool
@@ -80,7 +80,7 @@ coreflexive :: Rel -> Bool
 coreflexive r = r ⊆ idt
 
 coreflexiv :: Rel -> Rel
-coreflexiv r = r ∩ idt
+coreflexiv = filter (uncurry (==))
 
 reflexive :: Rel -> Bool
 reflexive r = idt ⊆ r
@@ -89,7 +89,10 @@ reflexiv :: Rel -> Rel
 reflexiv r = r ++ idt
 
 transitive :: Rel -> Bool
-transitive r = r · r =~= r
+transitive r = r · r ⊆ r
+
+idempotent :: Rel -> Bool
+idempotent r = r · r =~= r
 
 symmetric :: Rel -> Bool
 symmetric r = r ⊆ op r
@@ -138,7 +141,7 @@ lemma' p = it "lemma" (property p)
 proof :: (HasCallStack, Testable a) => a -> SpecWith (Arg Property)
 proof p = it "proof" (property p)
 
-main = hspec do
+basics = hspec do
   describe "Category axioms" do
     check "associativity" \ r s t -> r · (s · t) =~= (r · s) · t
     check "left id" \ r -> r · idt =~= r
@@ -201,7 +204,8 @@ main = hspec do
        ]
      ]
    check "range left comp" \ r s -> ran (r · s) ⊆ ran r
-   check' \ r s -> ran (r · s) =~= ran (r · ran s)
+   lemma "range left comp eqn" \ r s -> ran (r · s) =~= ran (r · ran s)
+   -- TODO: proof
    check' \ r s -> dom (r · s) =~= dom (dom r · s)
    check "range coreflexive" \ r -> coreflexive (ran r)
    lemma "range meet" \ r s -> ran (r ∩ s) =~= idt ∩ (r · op s)
@@ -225,6 +229,13 @@ main = hspec do
     check "symmetri correct" \ r -> symmetric (symmetri r)
     lemma "coreflexive ==> transitive" \ (coreflexiv -> r) -> transitive r
     proof \ (coreflexiv -> r) -> ascending [r · r, r · idt, r]
+    lemma "coreflexive symmetric" \ (coreflexiv -> r) -> symmetric r
+    proof \ (coreflexiv -> r) -> ascending
+      [ r
+      , r · op r · r -- lemma from above
+      , idt · op r · idt -- r ⊆ id
+      , op r
+      ]
     lemma "coreflexive comp = meet" \ (coreflexiv -> r) (coreflexiv -> s) -> r · s =~= r ∩ s
     proof \ (coreflexiv -> r) (coreflexiv -> s) -> and
       [ -- ==>
@@ -240,6 +251,71 @@ main = hspec do
         , r · (idt ∩ (r · s)) -- r coreflexive ==> r = op r
         , r · r · s -- r · s coreflexive
         , r · s -- r coreflexive ==> r transitive
+        ]
+      ]
+    lemma "coreflexive comp meet" \ (coreflexiv -> c) r s -> (c · r) ∩ s =~= c · (r ∩ s)
+    proof \ (coreflexiv -> c) r s -> and
+      [ -- <==
+        ascending
+        [ c · (r ∩ s)
+        , (c · r) ∩ (c · s) -- distrib
+        , (c · r) ∩ s -- c ⊆ id
+        ]
+      , -- ==>
+        ascending
+        [ (c · r) ∩ s
+        , c · (r ∩ (op c · s)) -- modular law
+        , c · (r ∩ c · s) -- c = op c
+        , c · (r ∩ s) -- c ⊆ id
+        ]
+      ]
+    lemma "coreflexive outside range" \ (coreflexiv -> c) r -> ran (c · r) =~= c · ran r
+    check "corefl out range dual" \ (coreflexiv -> c) r -> dom (r · c) =~= dom r · c
+    pure "(c ·) is a restriction. ran(restrict r) is the same as restrict(ran r)."
+    proof \ (coreflexiv -> c) r -> and
+      [ -- ==>
+        ascending
+        [ ran (c · r)
+        , (c · r · op r · op c) ∩ idt -- direct defn of range
+        , c · ((r · op r · op c) ∩ idt) -- coreflexive comp meet
+        , c · ((r · op r) ∩ idt) -- op c coreflexive
+        , c · ran r -- defn of range
+        ]
+      , -- <==
+        ascending
+        [ c · ran r
+        , c · ((r · op r) ∩ idt) -- defn of range
+        , (c · r · op r) ∩ idt -- corefl comp meet
+        , (op c · c · r · op r) ∩ idt -- c is symmetric and transitive
+        , (op c ∩ (c · r · op r)) ∩ idt -- corefl comp = meet (c · r · op r corefl b/c ran(c · ...) ⊆ ran c)
+        , ((c · r · op r) · op c) ∩ idt -- corefl comp = meet
+        , ran (c · r) -- defn of range
+        ]
+      ]
+    lemma "sym trans <=>" \ r -> symmetric r && transitive r <=> r =~= r · op r
+    proof \ r -> and
+      [ -- ==>
+        chain
+        [ symmetric r && transitive r
+        , equivalent
+          [ r
+          , r · r -- r is transitive
+          , r · op r -- r is symmetric
+          ]
+        ]
+      , -- <==
+        and
+        [ -- symmetry
+          chain
+          [ r =~= r · op r
+          , op r =~= r · op r -- op both sides
+          , r =~= op r
+          ]
+        , -- transitivity
+          chain
+          [ r =~= r · op r
+          , r =~= r · r -- symmetry
+          ]
         ]
       ]
   describe "Simple and entire arrows" do
@@ -293,3 +369,49 @@ main = hspec do
       , op g ⊆ op f -- shunting g
       , g ⊆ f -- op monotonic involution
       ]
+    lemma "range meet comp" \ r s t -> ran (r ∩ (s · t)) =~= ran ((r · op t) ∩ s)
+    proof \ r s t -> and
+      [ -- ==>
+        ascending
+        [ ran (r ∩ (s · t))
+        , ran ((s ∩ (r · op t)) · t) -- modular
+        , ran (s ∩ (r · op t)) -- range comp left
+        ]
+      , -- <==
+        ascending
+        [ ran ((r · op t) ∩ s)
+        , ran ((r ∩ (s · t)) · op t) -- modular
+        , ran (r ∩ (s · t)) -- range comp left
+        ]
+      ]
+    lemma "simple left distr" \ (simpl -> f) r s -> op f · (r ∩ s) =~= (op f · r) ∩ (op f · s)
+    lemma "dom func" \ r (func -> f) -> dom r · f =~= f · dom (r · f)
+    -- proof: TODO
+    --proof \ r (func -> f) -> and
+    --  [ -- ==> 
+    --    equivalent
+    --    [ dom r · f ⊆ f · dom (r · f)
+    --    , dom r · f ⊆ f · dom (dom r · f)
+    --    , dom r · f ⊆ f · ran (op f · op (dom r))
+    --    , dom r · f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt)
+    --    , ((op r · r) ∩ idt) · f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt)
+    --    , (op r · r · f) ∩ f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt) -- f simple
+    --    , (op r · r · f) ∩ f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt) -- f simple
+    --    ascending
+    --    [ dom r · f
+    --    , ((op r · r) ∩ idt) · f
+    --    , (op r · r · f) ∩ f -- distrib
+    --    ]
+    --    [ dom r · f ⊆ f · dom (r · f)
+    --    , op f · dom r · f ⊆ dom (r · f)
+    --    , op f · ((op r · r) ∩ idt) · f ⊆ 
+    --  , chain
+    --    [ f · dom (r · f) ⊆ dom r · f
+    --    , f · dom (r · f) · op f ⊆ dom r -- dual shunting
+    --    , dom (r · f) · op f ⊆ op f · dom r -- shunting
+    --    , ran (op f · op r) · op f ⊆ op f · dom r -- shunting
+    --    ]
+    --  ]
+
+main = do
+  basics
