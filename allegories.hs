@@ -15,7 +15,7 @@ import qualified Data.Char as C
 import Data.Function (on)
 import Control.Monad
 
-type Rel a = [(a, a)]
+type Rel a b = [(a, b)]
 
 -- Printable characters
 newtype Tiny = Tiny {unTiny :: Int} deriving (Eq, Ord)
@@ -49,32 +49,36 @@ class Testable a => Proposition' a where
   prop = property
 
 instance Proposition' Bool
-instance (Object a, Arbitrary a, Show a, Proposition' p) => Proposition' (Rel a -> p)
+instance
+  ( Object a, Arbitrary a, Show a
+  , Object b, Arbitrary b, Show b
+  , Proposition' p
+  ) => Proposition' (Rel a b -> p)
 
 class Proposition' a => Proposition a
 instance Proposition Bool
-instance (a ~ Tiny, Proposition p) => Proposition (Rel a -> p)
+instance (a ~ Tiny, b ~ Tiny, Proposition p) => Proposition (Rel a b -> p)
 
 infix 4 =~=
-(=~=) :: Object a => Rel a -> Rel a -> Bool
+(=~=) :: (Object a, Object b) => Rel a b -> Rel a b -> Bool
 (=~=) = (==) `on` S.fromList
 
 infixl 7 ·
-(·) :: Object a => Rel a -> Rel a -> Rel a
+(·) :: (Object a, Object b) => Rel b c -> Rel a b -> Rel a c
 r · s = [(x, z) | (x, y) <- s, (y', z) <- r, y == y']
 
-idt :: Object a => Rel a
+idt :: Object a => Rel a a
 idt = [(x, x) | x <- universe]
 
 infix 4 ⊆
-(⊆) :: Object a => Rel a -> Rel a -> Bool
+(⊆) :: (Object a, Object b) => Rel a b -> Rel a b -> Bool
 r ⊆ s = S.fromList r `S.isSubsetOf` S.fromList s
 
 infixl 5 ∩
-(∩) :: Object a => Rel a -> Rel a -> Rel a
+(∩) :: (Object a, Object b) => Rel a b -> Rel a b -> Rel a b
 r ∩ s = S.toList (S.fromList r `S.intersection` S.fromList s)
 
-op :: Object a => Rel a -> Rel a
+op :: (Object a, Object b) => Rel a b -> Rel b a
 op = map (\(x, y) -> (y, x))
 
 infix 2 <=>
@@ -90,73 +94,83 @@ adjAll f = \case
 equivalent :: Eq a => [a] -> Bool
 equivalent = adjAll (==)
 
-ascending :: Object a => [Rel a] -> Bool
+ascending :: (Object a, Object b) => [Rel a b] -> Bool
 ascending = adjAll (⊆)
 
 chain :: [Bool] -> Bool
 chain = adjAll (\ x y -> not x || y)
 
-dom :: Object a => Rel a -> Rel a
+dom :: (Object a, Object b) => Rel a b -> Rel a a
 dom r = [(x, x) | (x, _) <- r]
 
-ran :: Object a => Rel a -> Rel a
+ran :: (Object a, Object b) => Rel a b -> Rel b b
 ran r = [(x, x) | (_, x) <- r]
 
-coreflexive :: Object a => Rel a -> Bool
+coreflexive :: Object a => Rel a a -> Bool
 coreflexive r = r ⊆ idt
 
-coreflexiv :: Object a => Rel a -> Rel a
+coreflexiv :: Object a => Rel a a -> Rel a a
 coreflexiv = filter (uncurry (==))
 
-reflexive :: Object a => Rel a -> Bool
+reflexive :: Object a => Rel a a -> Bool
 reflexive r = idt ⊆ r
 
-reflexiv :: Object a => Rel a -> Rel a
+reflexiv :: Object a => Rel a a -> Rel a a
 reflexiv r = r ++ idt
 
-transitive :: Object a => Rel a -> Bool
+transitive :: Object a => Rel a a -> Bool
 transitive r = r · r ⊆ r
 
-idempotent :: Object a => Rel a -> Bool
+idempotent :: Object a => Rel a a -> Bool
 idempotent r = r · r =~= r
 
-symmetric :: Object a => Rel a -> Bool
+symmetric :: Object a => Rel a a -> Bool
 symmetric r = r ⊆ op r
 
-symmetri :: Object a => Rel a -> Rel a
+symmetri :: Object a => Rel a a -> Rel a a
 symmetri r = r ++ op r
 
-antisymmetric :: Object a => Rel a -> Bool
+antisymmetric :: Object a => Rel a a -> Bool
 antisymmetric r = r ∩ op r ⊆ idt
 
-simple :: Object a => Rel a -> Bool
+simple :: (Object a, Object b) => Rel a b -> Bool
 simple r = r · op r ⊆ idt
 
-simpl :: Object a => Rel a -> Rel a
+simpl :: (Object a, Object b) => Rel a b -> Rel a b
 simpl = L.nubBy ((==) `on` fst)
 
-entire :: Object a => Rel a -> Bool
+entire :: (Object a, Object b) => Rel a b -> Bool
 entire r = idt ⊆ op r · r
 
-entir :: Object a => Rel a -> Rel a
-entir = (++ idt)
+entir :: (Object a, Object b) => Rel a b -> Rel a b
+entir = (++ zip (cycle universe) universe)
 
-funcn :: Object a => Rel a -> Bool
+funcn :: (Object a, Object b) => Rel a b -> Bool
 funcn = liftM2 (&&) simple entire
 
-func :: Object a => Rel a -> Rel a
+func :: (Object a, Object b) => Rel a b -> Rel a b
 func = simpl . entir
 
-tabulation :: Object a => Rel a -> Rel a -> Rel a -> Bool
-tabulation f g r = r =~= f · op g && (op f · f) ∩ (op g · g) =~= idt
+tabulation ::
+  (Object a, Object b, Object c) =>
+  Rel c a -> Rel c b -> Rel a b -> Bool
+tabulation f g r = and
+  [ funcn f
+  , funcn g
+  , r =~= g · op f
+  , (op f · f) ∩ (op g · g) =~= idt
+  ]
 
-tab :: Object a => Rel a -> (Rel a, Rel a)
+tab :: (Object a, Object b) => Rel a b -> (Rel a b, Rel a b)
 tab r = undefined
 
 --------------------------------------------------------------------------------
 
 latestOnly :: Bool
 latestOnly = True
+
+-- For simple properties which only require one domain (Tiny)
+-- The simpler Proposition constraint eliminates need for type annotations
 
 check :: (HasCallStack, Proposition a) => String -> a -> SpecWith (Arg Property)
 check s p = it s (prop p)
@@ -172,6 +186,8 @@ alemma p = it "lemma" (prop p)
 
 proof :: (HasCallStack, Proposition a) => a -> SpecWith (Arg Property)
 proof p = it "proof" (prop p)
+
+-- For more complicated properties which need multiple domains
 
 check' :: (HasCallStack, Proposition' a) => String -> a -> SpecWith (Arg Property)
 check' s p = it s (prop p)
