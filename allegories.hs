@@ -145,7 +145,19 @@ main = hspec do
      check "range universal property" \ r x -> ran r ⊆ x <=> r ⊆ x · r
      check "range direct definition" \ r -> ran r =~= r · op r ∩ idt
      lemma "range left id" \ r -> r =~= ran r · r
-     -- proof \ r -> undefined
+     proof \ r -> and
+       [ -- ==>
+         chain
+         [ r ⊆ ran r · r
+         , ran r ⊆ ran r -- universal property of ran r
+         ]
+       , -- <==
+         ascending
+         [ ran r · r
+         , idt · r -- ran r is coreflexive
+         , r
+         ]
+       ]
      check "range left comp" \ r s -> ran (r · s) ⊆ ran r
      check' \ r s -> ran (r · s) =~= ran (r · ran s)
      check' \ r s -> dom (r · s) =~= dom (dom r · s)
@@ -153,8 +165,7 @@ main = hspec do
      lemma "range meet" \ r s -> ran (r ∩ s) =~= idt ∩ r · op s
      proof \ r s -> ascending
        [ ran (r ∩ s)
-       , ((r ∩ s) · op (r ∩ s)) ∩ idt
-       , ((r ∩ s) · (op r ∩ op s)) ∩ idt
-       , ((r · op r) ∩ (r · op s) ∩ (s · op r) ∩ (s · op s)) ∩ idt
-       , (r · op s) ∩ idt
+       , ((r ∩ s) · op (r ∩ s)) ∩ idt -- direct range definition
+       , ((r · op r) ∩ (r · op s) ∩ (s · op r) ∩ (s · op s)) ∩ idt -- distribution
+       , (r · op s) ∩ idt -- monotonicity of meet
        ]
