@@ -1,8 +1,11 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
@@ -15,6 +18,8 @@ import qualified Data.Char as C
 import Data.Function (on)
 import Control.Monad
 
+type a <~ b = b -> a
+type a <= b = b => a
 type Rel a b = [(a, b)]
 
 -- Printable characters
@@ -28,7 +33,7 @@ instance Enum Tiny where
 
 instance Bounded Tiny where
   minBound = Tiny 0
-  maxBound = Tiny 100
+  maxBound = Tiny 25
 
 class Universe a where universe :: [a]
 instance Universe Tiny where universe = [minBound .. maxBound]
@@ -45,7 +50,7 @@ instance Object Tiny
 instance (Object a, Object b) => Object (a, b)
 
 class Testable a => Proposition' a where
-  prop :: a -> Property
+  prop :: Property <~ a
   prop = property
 
 instance Proposition' Bool
@@ -53,14 +58,14 @@ instance
   ( Object a, Arbitrary a, Show a
   , Object b, Arbitrary b, Show b
   , Proposition' p
-  ) => Proposition' (Rel a b -> p)
+  ) => Proposition' (p <~ Rel a b)
 
 class Proposition' a => Proposition a
 instance Proposition Bool
-instance (a ~ Tiny, b ~ Tiny, Proposition p) => Proposition (Rel a b -> p)
+instance (a ~ Tiny, b ~ Tiny, Proposition p) => Proposition (p <~ Rel a b)
 
 infix 4 =~=
-(=~=) :: (Object a, Object b) => Rel a b -> Rel a b -> Bool
+(=~=) :: Bool <~ Rel a b <~ Rel a b <= (Object a, Object b)
 (=~=) = (==) `on` S.fromList
 
 infixl 7 ·
@@ -151,18 +156,25 @@ funcn = liftM2 (&&) simple entire
 func :: (Object a, Object b) => Rel a b -> Rel a b
 func = simpl . entir
 
+-- Assumes r is entire
 tabulation ::
-  (Object a, Object b, Object c) =>
-  Rel c a -> Rel c b -> Rel a b -> Bool
+  (Object a, Object b) =>
+  Rel (a, b) b -> Rel (a, b) a -> Rel a b -> Bool
 tabulation f g r = and
-  [ funcn f
-  , funcn g
-  , r =~= g · op f
-  , (op f · f) ∩ (op g · g) =~= idt
+  let c = zip r r in -- a subset of (a, b)
+  [ simple f
+  , simple g
+  , dom f =~= c -- can't use entire b/c f, g functions wrt c not all of a × b
+  , dom g =~= c
+  , r =~= f · op g
+  , (op f · f) ∩ (op g · g) =~= c
   ]
 
-tab :: (Object a, Object b) => Rel a b -> (Rel a b, Rel a b)
-tab r = undefined
+tab :: (Object a, Object b) => Rel a b -> (Rel (a, b) b, Rel (a, b) a)
+tab r =
+  ( [(x, snd x) | x <- r]
+  , [(x, fst x) | x <- r]
+  )
 
 --------------------------------------------------------------------------------
 
@@ -250,14 +262,14 @@ basics = hspec do
         ]
   describe "Domain and range" do
    acheck \ r -> dom r =~= ran (op r)
-   check "range universal property" \ r x -> ran r ⊆ x <=> r ⊆ x · r
+   check "range universal property" \ r (coreflexiv -> x) -> ran r ⊆ x <=> r ⊆ x · r
    check "range direct definition" \ r -> ran r =~= r · op r ∩ idt
    lemma "range left id" \ r -> r =~= ran r · r
    proof \ r -> and
      [ -- ==>
        chain
        [ r ⊆ ran r · r
-       , ran r ⊆ ran r -- universal property of ran r
+       , ran r ⊆ ran r -- universal property of ran r (clearly ran r ⊆ idt)
        ]
      , -- <==
        ascending
@@ -463,34 +475,29 @@ basics = hspec do
       ]
     lemma "simple left distr" \ (simpl -> f) r s -> op f · (r ∩ s) =~= (op f · r) ∩ (op f · s)
     lemma "dom func" \ r (func -> f) -> dom r · f =~= f · dom (r · f)
-    -- proof: TODO
-    --proof \ r (func -> f) -> and
-    --  [ -- ==> 
-    --    equivalent
-    --    [ dom r · f ⊆ f · dom (r · f)
-    --    , dom r · f ⊆ f · dom (dom r · f)
-    --    , dom r · f ⊆ f · ran (op f · op (dom r))
-    --    , dom r · f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt)
-    --    , ((op r · r) ∩ idt) · f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt)
-    --    , (op r · r · f) ∩ f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt) -- f simple
-    --    , (op r · r · f) ∩ f ⊆ f · ((op f · op (dom r) · dom r · f) ∩ idt) -- f simple
-    --    ascending
-    --    [ dom r · f
-    --    , ((op r · r) ∩ idt) · f
-    --    , (op r · r · f) ∩ f -- distrib
-    --    ]
-    --    [ dom r · f ⊆ f · dom (r · f)
-    --    , op f · dom r · f ⊆ dom (r · f)
-    --    , op f · ((op r · r) ∩ idt) · f ⊆ 
-    --  , chain
-    --    [ f · dom (r · f) ⊆ dom r · f
-    --    , f · dom (r · f) · op f ⊆ dom r -- dual shunting
-    --    , dom (r · f) · op f ⊆ op f · dom r -- shunting
-    --    , ran (op f · op r) · op f ⊆ op f · dom r -- shunting
-    --    ]
-    --  ]
+    proof \ r (func -> f) -> and
+      [ -- ==>
+        ascending
+        [ dom r · f
+        , ((op r · r) ∩ idt) · f -- defn of dom
+        , ((op r · r) ∩ idt ∩ idt) · f -- defn of dom
+        , ((op r · r · f) ∩ f) ∩ f -- distr
+        , ((op r ∩ (f · op f · op r)) · r · f) ∩ f -- modlaw
+        , (f · op f · op r · r · f) ∩ f -- monotonicity
+        , f · (op f · op r · r · f ∩ idt) -- f entire, so left distr is equality
+        , f · dom (r · f) -- defn of dom
+        ]
+      , ascending
+        [ f · dom (r · f)
+        , f · ((op f · op r · r · f) ∩ idt) -- defn of dom
+        , (f · op f · op r · r · f) ∩ f -- distr (btw, f entire so this is equality)
+        , (op r · r · f) ∩ f -- f simple
+        , ((op r · r) ∩ idt) · f -- f simple so right distr is equality
+        , dom r · f -- f simple so right distr is equality
+        ]
+     ]
   describe "Tabular allegories" do
-    pure ()
+    check "tab correct" \ (entir -> r) -> let (f, g) = tab r in tabulation f g r
 
 main = do
   basics
